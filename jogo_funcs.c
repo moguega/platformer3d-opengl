@@ -394,27 +394,240 @@ void gAtualizaCamera(void)
 /* ----------------------------------------------------------------------------
  *  DESENHO
  * -------------------------------------------------------------------------- */
+/* Caixa axis-aligned com 6 quads e normais explicitas (base de quase tudo). */
+static void gCaixa(GLfloat x0, GLfloat y0, GLfloat z0,
+                   GLfloat x1, GLfloat y1, GLfloat z1)
+{
+    glBegin(GL_QUADS);
+        glNormal3f(0, 1, 0);  glVertex3f(x0,y1,z0); glVertex3f(x0,y1,z1); glVertex3f(x1,y1,z1); glVertex3f(x1,y1,z0);
+        glNormal3f(0,-1, 0);  glVertex3f(x0,y0,z0); glVertex3f(x1,y0,z0); glVertex3f(x1,y0,z1); glVertex3f(x0,y0,z1);
+        glNormal3f(1, 0, 0);  glVertex3f(x1,y0,z0); glVertex3f(x1,y1,z0); glVertex3f(x1,y1,z1); glVertex3f(x1,y0,z1);
+        glNormal3f(-1,0, 0);  glVertex3f(x0,y0,z0); glVertex3f(x0,y0,z1); glVertex3f(x0,y1,z1); glVertex3f(x0,y1,z0);
+        glNormal3f(0, 0, 1);  glVertex3f(x0,y0,z1); glVertex3f(x1,y0,z1); glVertex3f(x1,y1,z1); glVertex3f(x0,y1,z1);
+        glNormal3f(0, 0,-1);  glVertex3f(x0,y0,z0); glVertex3f(x0,y1,z0); glVertex3f(x1,y1,z0); glVertex3f(x1,y0,z0);
+    glEnd();
+}
+
+/* Texto centralizado horizontalmente (usado em menus e mensagens grandes). */
+static void gTextoCentro(GLfloat y, const char *texto)
+{
+    int w = glutBitmapLength(GLUT_BITMAP_HELVETICA_18, (const unsigned char *)texto);
+    gDesenhaMensagem((g_largura - w) * 0.5f, y, texto);
+}
+
+/* Render principal: ceu, cena 3D (camera orbital) e HUD 2D, conforme o estado. */
 void gDesenha(void)
 {
-    /*STUB_DESENHA*/
+    int i;
+    GLfloat yawR, elev, horiz, ex, ey, ez;
+    GLfloat luz_pos[4] = { 0.4f, 1.0f, 0.35f, 0.0f };  /* luz direcional */
+
+    if (g_estado == ESTADO_GAME_OVER)   glClearColor(0.30f, 0.05f, 0.05f, 1.0f);
+    else if (g_estado == ESTADO_VITORIA) glClearColor(0.05f, 0.30f, 0.10f, 1.0f);
+    else                                 glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    /* ---- menu: apenas texto ---- */
+    if (g_estado == ESTADO_MENU) {
+        glDisable(GL_DEPTH_TEST); glDisable(GL_LIGHTING);
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+        gluOrtho2D(0.0, (double)g_largura, 0.0, (double)g_altura);
+        glMatrixMode(GL_MODELVIEW);  glPushMatrix(); glLoadIdentity();
+        glColor3f(1.0f, 0.95f, 0.5f);
+        gTextoCentro(g_altura * 0.64f, "PLATFORMER 3D");
+        glColor3f(0.85f, 0.9f, 1.0f);
+        gTextoCentro(g_altura * 0.50f, "WASD = mover     ESPACO = pular");
+        gTextoCentro(g_altura * 0.44f, "Botao direito = girar camera     Roda = zoom");
+        gTextoCentro(g_altura * 0.38f, "R = novo nivel     ESC = sair");
+        glColor3f(0.5f, 1.0f, 0.6f);
+        gTextoCentro(g_altura * 0.26f, "ENTER ou ESPACO para comecar");
+        glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glEnable(GL_DEPTH_TEST); glEnable(GL_LIGHTING);
+        glutSwapBuffers();
+        return;
+    }
+
+    /* ceu so no jogo normal (vitoria/gameover usam a cor de fundo tingida) */
+    if (g_estado == ESTADO_JOGANDO)
+        gDesenhaFundo();
+
+    /* ---- camera orbital: olho calculado a partir de alvo + yaw + pitch ---- */
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    yawR  = g_camera.yaw * GRAUS_PARA_RAD;
+    elev  = -g_camera.pitch * GRAUS_PARA_RAD;        /* pitch [-60,-10] -> elev [10,60] */
+    horiz = g_camera.distancia * cosf(elev);
+    ex = g_camera.alvo_x + horiz * sinf(yawR);
+    ez = g_camera.alvo_z + horiz * cosf(yawR);
+    ey = g_camera.alvo_y + g_camera.distancia * sinf(elev);
+    gluLookAt(ex, ey, ez,
+              g_camera.alvo_x, g_camera.alvo_y, g_camera.alvo_z,
+              0.0f, 1.0f, 0.0f);
+
+    glLightfv(GL_LIGHT0, GL_POSITION, luz_pos);      /* luz fixa no mundo */
+
+    /* ---- cena ---- */
+    for (i = 0; i < NUM_PLATAFORMAS; i++) gDesenhaPlataforma(&g_nivel[i]);
+    for (i = 0; i < g_total_estrelas;  i++) gDesenhaEstrela(&g_estrelas[i]);
+    if (!g_reiniciando) gDesenhaJogador();           /* some durante o reinicio */
+
+    gDesenhaHUD();
     glutSwapBuffers();
 }
 
-void gDesenhaFundo(void) { /*STUB_FUNDO*/ }
+/* Prepara projecao 2D (0..1) sem profundidade e desenha o ceu como quad. */
+void gDesenhaFundo(void)
+{
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    gluOrtho2D(0.0, 1.0, 0.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);  glPushMatrix(); glLoadIdentity();
+    gDesenhaCeu();
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+}
 
-void gDesenhaCeu(void) { /*STUB_CEU*/ }
+/* Gradiente de ceu falso: base clara -> topo azul (precisa de GL_SMOOTH). */
+void gDesenhaCeu(void)
+{
+    glBegin(GL_QUADS);
+        glColor3f(0.62f, 0.82f, 0.96f); glVertex2f(0.0f, 0.0f);
+        glColor3f(0.62f, 0.82f, 0.96f); glVertex2f(1.0f, 0.0f);
+        glColor3f(0.16f, 0.34f, 0.62f); glVertex2f(1.0f, 1.0f);
+        glColor3f(0.16f, 0.34f, 0.62f); glVertex2f(0.0f, 1.0f);
+    glEnd();
+}
 
-void gDesenhaPlataforma(Plataforma *p) { (void)p; /*STUB_PLATAFORMA*/ }
+/* Desenha uma plataforma como caixa, com cor por tipo (e pisca se fragil). */
+void gDesenhaPlataforma(Plataforma *p)
+{
+    GLfloat x0, x1, z0, z1, y0, y1;
+    if (!p->ativa) return;
 
-void gDesenhaJogador(void) { /*STUB_JOGADOR*/ }
+    if (p->eh_meta) {
+        glColor3f(1.0f, 0.85f, 0.20f);                 /* dourado (meta) */
+    } else if (p->tipo == 1) {
+        glColor3f(0.30f, 0.70f, 0.40f);                /* verde (movel)  */
+    } else if (p->tipo == 2) {
+        /* laranja; pisca quando faltam menos de 0.8 s */
+        if (p->timer_fragil >= 0.0f && p->timer_fragil < 0.8f &&
+            ((int)(p->timer_fragil * 12.0f) & 1))
+            glColor3f(1.0f, 0.80f, 0.55f);
+        else
+            glColor3f(0.90f, 0.50f, 0.20f);
+    } else {
+        glColor3f(0.40f, 0.50f, 0.60f);                /* cinza azulado  */
+    }
 
-void gDesenhaEstrela(Estrela *e) { (void)e; /*STUB_ESTRELA*/ }
+    x0 = p->x - p->largura      * 0.5f; x1 = p->x + p->largura      * 0.5f;
+    z0 = p->z - p->profundidade * 0.5f; z1 = p->z + p->profundidade * 0.5f;
+    y1 = p->y; y0 = p->y - ESPESSURA_PLAT;
+    gCaixa(x0, y0, z0, x1, y1, z1);
+}
 
-void gDesenhaHUD(void) { /*STUB_HUD*/ }
+/* Boneco low poly: corpo + cabeca + pernas animadas; encara g_jogador.yaw. */
+void gDesenhaJogador(void)
+{
+    float bob = sinf(g_jogador.frame_passo * 0.4f) * 0.05f;  /* leve balanco */
+    float sw  = sinf(g_jogador.frame_passo * 0.4f) * 0.18f;  /* passada      */
+    glPushMatrix();
+        glTranslatef(g_jogador.x, g_jogador.y, g_jogador.z);
+        glRotatef(g_jogador.yaw, 0.0f, 1.0f, 0.0f);
+        /* corpo */
+        glColor3f(0.85f, 0.25f, 0.25f);
+        gCaixa(-0.28f, 0.45f + bob, -0.20f, 0.28f, 1.05f + bob, 0.20f);
+        /* cabeca */
+        glColor3f(0.95f, 0.80f, 0.65f);
+        gCaixa(-0.22f, 1.05f + bob, -0.22f, 0.22f, 1.45f + bob, 0.22f);
+        /* pernas */
+        glColor3f(0.20f, 0.20f, 0.35f);
+        gCaixa(-0.24f, 0.0f, -0.14f + sw, -0.04f, 0.48f, 0.14f + sw);
+        gCaixa( 0.04f, 0.0f, -0.14f - sw,  0.24f, 0.48f, 0.14f - sw);
+    glPopMatrix();
+}
 
+/* Estrela: octaedro amarelo girando em torno de Y (animacao por g_tempo). */
+void gDesenhaEstrela(Estrela *e)
+{
+    const float s = 0.32f;
+    if (e->coletada) return;
+    glPushMatrix();
+        glTranslatef(e->x, e->y, e->z);
+        glRotatef(g_tempo * 90.0f, 0.0f, 1.0f, 0.0f);  /* ~g_tempo*2 rad/s */
+        glColor3f(1.0f, 0.9f, 0.2f);
+        glBegin(GL_TRIANGLES);
+            /* topo (0,s,0) com 4 vertices do equador */
+            glNormal3f( 1, 1, 1); glVertex3f(0,s,0); glVertex3f(s,0,0); glVertex3f(0,0,s);
+            glNormal3f(-1, 1, 1); glVertex3f(0,s,0); glVertex3f(0,0,s); glVertex3f(-s,0,0);
+            glNormal3f(-1, 1,-1); glVertex3f(0,s,0); glVertex3f(-s,0,0); glVertex3f(0,0,-s);
+            glNormal3f( 1, 1,-1); glVertex3f(0,s,0); glVertex3f(0,0,-s); glVertex3f(s,0,0);
+            /* base (0,-s,0) */
+            glNormal3f( 1,-1, 1); glVertex3f(0,-s,0); glVertex3f(0,0,s); glVertex3f(s,0,0);
+            glNormal3f(-1,-1, 1); glVertex3f(0,-s,0); glVertex3f(-s,0,0); glVertex3f(0,0,s);
+            glNormal3f(-1,-1,-1); glVertex3f(0,-s,0); glVertex3f(0,0,-s); glVertex3f(-s,0,0);
+            glNormal3f( 1,-1,-1); glVertex3f(0,-s,0); glVertex3f(s,0,0); glVertex3f(0,0,-s);
+        glEnd();
+    glPopMatrix();
+}
+
+/* HUD 2D (glOrtho em pixels): estrelas, vidas, pontos e mensagens de estado. */
+void gDesenhaHUD(void)
+{
+    char buf[96];
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    gluOrtho2D(0.0, (double)g_largura, 0.0, (double)g_altura);
+    glMatrixMode(GL_MODELVIEW);  glPushMatrix(); glLoadIdentity();
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    sprintf(buf, "Estrelas: %d / %d", g_estrelas_coletadas, g_total_estrelas);
+    gDesenhaMensagem(20.0f, (GLfloat)g_altura - 30.0f, buf);
+    sprintf(buf, "Vidas: %d", g_vidas);
+    gDesenhaMensagem(20.0f, (GLfloat)g_altura - 54.0f, buf);
+    sprintf(buf, "Pontos: %d", g_pontos);
+    gDesenhaMensagem(20.0f, (GLfloat)g_altura - 78.0f, buf);
+
+    /* "Reiniciando..." pisca a cada 8 ticks durante o delay */
+    if (g_reiniciando && ((g_tempo_reinicio / 8) & 1)) {
+        glColor3f(1.0f, 0.6f, 0.3f);
+        gTextoCentro(g_altura * 0.5f, "Reiniciando...");
+    }
+
+    if (g_estado == ESTADO_VITORIA) {
+        glColor3f(1.0f, 0.95f, 0.4f);
+        gTextoCentro(g_altura * 0.60f, "GOAL!  VOCE VENCEU!");
+        glColor3f(1.0f, 1.0f, 1.0f);
+        sprintf(buf, "Pontuacao final: %d", g_pontos);
+        gTextoCentro(g_altura * 0.50f, buf);
+        gTextoCentro(g_altura * 0.42f, "R = jogar de novo (nova seed)");
+    } else if (g_estado == ESTADO_GAME_OVER) {
+        glColor3f(1.0f, 0.5f, 0.5f);
+        gTextoCentro(g_altura * 0.58f, "GAME OVER");
+        glColor3f(1.0f, 1.0f, 1.0f);
+        gTextoCentro(g_altura * 0.48f, "R = tentar de novo (nova seed)");
+    }
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+}
+
+/* Escreve uma string com bitmap font na posicao 2D (x,y) atual. */
 void gDesenhaMensagem(GLfloat x, GLfloat y, const char *texto)
-{ (void)x; (void)y; (void)texto; /*STUB_MENSAGEM*/ }
+{
+    const char *p;
+    glRasterPos2f(x, y);
+    for (p = texto; *p; p++)
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *p);
+}
 
 /* ----------------------------------------------------------------------------
  *  ENTRADA / JANELA
@@ -464,5 +677,9 @@ void gRedimensiona(int largura, int altura)
     g_largura = largura;
     g_altura  = (altura > 0) ? altura : 1;
     glViewport(0, 0, g_largura, g_altura);
-    /*STUB_REDIMENSIONA*/
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluPerspective(60.0, (double)g_largura / (double)g_altura, 0.1, 500.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 }
