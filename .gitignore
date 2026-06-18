@@ -1,0 +1,16 @@
+# Objetos e binarios
+*.o
+*.obj
+*.exe
+jogo
+jogo.exe
+
+# Diretorio de build
+build/
+
+# Arquivos temporarios de editor / SO
+*~
+*.swp
+.vscode/
+.DS_Store
+Thumbs.db
