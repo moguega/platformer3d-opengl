@@ -40,9 +40,64 @@ int          g_posicao_y         = 0;
 /* ----------------------------------------------------------------------------
  *  INICIALIZACAO
  * -------------------------------------------------------------------------- */
-void gInicializa(void) { /*STUB_INICIALIZA*/ }
+/* Configura o estado fixo do OpenGL (profundidade, luz, material) e prepara
+ * o primeiro nivel, deixando o jogo na tela de menu. */
+void gInicializa(void)
+{
+    GLfloat amb[4]  = { 0.35f, 0.35f, 0.40f, 1.0f };
+    GLfloat dif[4]  = { 0.85f, 0.85f, 0.80f, 1.0f };
+    GLfloat spec[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
-void gInicializaJogo(void) { /*STUB_INICIALIZAJOGO*/ }
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_NORMALIZE);
+    glShadeModel(GL_SMOOTH);          /* necessario p/ o gradiente do ceu */
+
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    glLightfv(GL_LIGHT0, GL_AMBIENT,  amb);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE,  dif);
+    glLightfv(GL_LIGHT0, GL_SPECULAR, spec);
+
+    glEnable(GL_COLOR_MATERIAL);      /* glColor3f -> material ambiente+difuso */
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+
+    memset(g_teclas, 0, sizeof(g_teclas));
+    g_arrastando = 0;
+    g_estado     = ESTADO_MENU;
+    g_semente    = (unsigned int)time(NULL);
+    gInicializaJogo();
+}
+
+/* Reinicia toda a partida (nivel + jogador + camera + contadores). */
+void gInicializaJogo(void)
+{
+    g_pontos             = 0;
+    g_vidas              = VIDAS_INICIAIS;
+    g_estrelas_coletadas = 0;
+    g_reiniciando        = 0;
+    g_tempo_reinicio     = 0;
+    g_coyote             = 0;
+    g_buffer_pulo        = 0;
+    g_plat_suporte       = -1;
+    g_dificuldade        = 1.0f;
+
+    gInicializaNivel(g_semente);
+
+    g_jogador.x = 0.0f; g_jogador.z = 0.0f;
+    g_jogador.y = g_nivel[0].y + 0.05f;
+    g_jogador.vel_x = g_jogador.vel_y = g_jogador.vel_z = 0.0f;
+    g_jogador.yaw = 0.0f;
+    g_jogador.no_chao = 1;
+    g_jogador.vivo = 1;
+    g_jogador.frame_passo = 0;
+
+    g_camera.alvo_x = 0.0f;
+    g_camera.alvo_y = g_jogador.y + 1.0f;
+    g_camera.alvo_z = 0.0f;
+    g_camera.yaw = 0.0f;
+    g_camera.pitch = -25.0f;
+    g_camera.distancia = 12.0f;
+}
 
 /* Gera o nivel de forma deterministica a partir de uma semente.
  * - plataforma 0: base 6x6 segura na origem
@@ -632,11 +687,39 @@ void gDesenhaMensagem(GLfloat x, GLfloat y, const char *texto)
 /* ----------------------------------------------------------------------------
  *  ENTRADA / JANELA
  * -------------------------------------------------------------------------- */
+/* Tecla pressionada. Mantem o estado em g_teclas[] (WASD continuos) e trata
+ * acoes pontuais: pulo (jump buffer), reinicio com nova seed, iniciar, sair. */
 void gTeclado(unsigned char tecla, int x, int y)
-{ (void)tecla; (void)x; (void)y; /*STUB_TECLADO*/ }
+{
+    (void)x; (void)y;
+    if (tecla >= 'A' && tecla <= 'Z') tecla = (unsigned char)(tecla + 32); /* normaliza */
+    g_teclas[tecla] = 1;
 
+    if (tecla == 27) exit(0);                       /* ESC = sair */
+
+    if (tecla == 'r') {                             /* R = novo nivel (nova seed) */
+        g_semente = (unsigned int)time(NULL);
+        gInicializaJogo();
+        g_estado = ESTADO_JOGANDO;
+        return;
+    }
+
+    if (tecla == ' ') {
+        if (g_estado == ESTADO_MENU)         g_estado = ESTADO_JOGANDO;
+        else if (g_estado == ESTADO_JOGANDO) g_buffer_pulo = FRAMES_BUFFER_PULO;
+    }
+
+    if (tecla == 13 && g_estado == ESTADO_MENU)     /* ENTER = comecar */
+        g_estado = ESTADO_JOGANDO;
+}
+
+/* Tecla liberada: limpa o estado em g_teclas[]. */
 void gTeclaSolta(unsigned char tecla, int x, int y)
-{ (void)tecla; (void)x; (void)y; /*STUB_TECLASOLTA*/ }
+{
+    (void)x; (void)y;
+    if (tecla >= 'A' && tecla <= 'Z') tecla = (unsigned char)(tecla + 32);
+    g_teclas[tecla] = 0;
+}
 
 /* Botao direito inicia/encerra o drag de orbita; roda do mouse faz zoom. */
 void gMouseBotao(int botao, int estado, int x, int y)
