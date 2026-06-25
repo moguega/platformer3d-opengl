@@ -38,6 +38,10 @@ int          g_arrastando        = 0;
 int          g_posicao_x         = 0;
 int          g_posicao_y         = 0;
 
+/* "toast" temporario p/ avisos rapidos (ex: "Todas as estrelas!") */
+char         g_msg_toast[64]     = "";
+float        g_msg_toast_tempo   = -1.0f;   /* <0 = sem mensagem ativa     */
+
 /* ----------------------------------------------------------------------------
  *  INICIALIZACAO
  * -------------------------------------------------------------------------- */
@@ -81,6 +85,9 @@ void gInicializaJogo(void)
     g_buffer_pulo        = 0;
     g_plat_suporte       = -1;
     g_dificuldade        = 1.0f;
+    g_msg_toast_tempo    = -1.0f;
+    g_msg_toast[0]       = '\0';
+    g_jogador.pulo_duplo_ativo = 0;
 
     gInicializaNivel(g_semente);
 
@@ -318,6 +325,12 @@ void gVerificaColisoes(void)
             e->coletada = 1;
             g_estrelas_coletadas++;
             g_pontos += 100;
+
+            /* todas as estrelas da arena coletadas: aviso temporario,
+             * sem alterar o estado do jogo (continua ESTADO_JOGANDO) */
+            if (g_estrelas_coletadas == g_total_estrelas && g_total_estrelas > 0) {
+                g_estado = ESTADO_ESCOLHA_RECOMPENSA;
+            }
         }
     }
 }
@@ -329,6 +342,12 @@ void gTimer(int valor)
     (void)valor;
 
     g_tempo += DT;
+
+    /* aviso temporario (toast): conta regressivamente e se desliga sozinho */
+    if (g_msg_toast_tempo >= 0.0f) {
+        g_msg_toast_tempo -= DT;
+        if (g_msg_toast_tempo < 0.0f) g_msg_toast_tempo = -1.0f;
+    }
 
     if (g_estado == ESTADO_JOGANDO) {
         /* --- 1. plataformas: moveis oscilam, frageis contam o tempo --- */
@@ -365,11 +384,21 @@ void gTimer(int valor)
                 if (g_vidas <= 0) {
                     g_estado = ESTADO_GAME_OVER;
                 } else {
+                    int j;
+                    /* rearma as plataformas frageis (e garante que tudo
+                     * que nao e frageis-ja-removido continue ativo) */
+                    for (j = 0; j < NUM_PLATAFORMAS; j++) {
+                        if (g_nivel[j].tipo == 2) {
+                            g_nivel[j].ativa        = 1;
+                            g_nivel[j].timer_fragil = -1.0f;
+                        }
+                    }
                     g_jogador.x = 0.0f; g_jogador.z = 0.0f;
                     g_jogador.y = g_nivel[0].y + 0.05f;
                     g_jogador.vel_x = g_jogador.vel_y = g_jogador.vel_z = 0.0f;
                     g_jogador.no_chao = 1; g_jogador.vivo = 1;
                     g_coyote = 0; g_buffer_pulo = 0;
+                    g_plat_suporte = -1;
                 }
             }
         } else {
@@ -408,11 +437,24 @@ void gTimer(int valor)
             else if (g_coyote > 0)      g_coyote--;
             if (g_buffer_pulo > 0)      g_buffer_pulo--;
 
-            if (g_buffer_pulo > 0 && (g_jogador.no_chao || g_coyote > 0)) {
-                g_jogador.vel_y   = VEL_PULO;
-                g_jogador.no_chao = 0;
-                g_coyote      = 0;
-                g_buffer_pulo = 0;
+            /* Recarrega o pulo duplo ao tocar no chao */
+            if (g_jogador.no_chao) {
+                g_jogador.pulos_restantes = 1;
+            }
+
+            if (g_buffer_pulo > 0) {
+                if (g_jogador.no_chao || g_coyote > 0) {
+                    /* Pulo normal do chao */
+                    g_jogador.vel_y   = VEL_PULO;
+                    g_jogador.no_chao = 0;
+                    g_coyote      = 0;
+                    g_buffer_pulo = 0;
+                } else if (g_jogador.pulo_duplo_ativo && g_jogador.pulos_restantes > 0) {
+                    /* Pulo duplo no ar */
+                    g_jogador.vel_y   = VEL_PULO; /* Zera a inercia de queda e pula de novo */
+                    g_jogador.pulos_restantes--;
+                    g_buffer_pulo = 0;
+                }
             }
 
             /* --- 5. integra + colide --- */
@@ -529,6 +571,42 @@ void gDesenha(void)
     for (i = 0; i < NUM_PLATAFORMAS; i++) gDesenhaPlataforma(&g_nivel[i]);
     for (i = 0; i < g_total_estrelas;  i++) gDesenhaEstrela(&g_estrelas[i]);
     if (!g_reiniciando) gDesenhaJogador();           /* some durante o reinicio */
+    
+    if (g_estado == ESTADO_ESCOLHA_RECOMPENSA) {
+        /* Desativa 3D temporariamente para desenhar o menu por cima da cena */
+        glDisable(GL_DEPTH_TEST); glDisable(GL_LIGHTING);
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+        gluOrtho2D(0.0, (double)g_largura, 0.0, (double)g_altura);
+        glMatrixMode(GL_MODELVIEW);  glPushMatrix(); glLoadIdentity();
+        
+        /* Fundo semi-transparente escurecido (requer GL_BLEND habilitado na inicializacao se quiser transparencia real, senao fica preto opaco) */
+        glColor3f(0.0f, 0.0f, 0.0f);
+        glBegin(GL_QUADS);
+            glVertex2f(0, 0); glVertex2f(g_largura, 0);
+            glVertex2f(g_largura, g_altura); glVertex2f(0, g_altura);
+        glEnd();
+
+        glColor3f(1.0f, 0.85f, 0.20f);
+        gTextoCentro(g_altura * 0.70f, "TODAS AS ESTRELAS COLETADAS!");
+        
+        glColor3f(1.0f, 1.0f, 1.0f);
+        gTextoCentro(g_altura * 0.55f, "ESCOLHA SUA RECOMPENSA:");
+        
+        glColor3f(0.5f, 1.0f, 0.6f);
+        gTextoCentro(g_altura * 0.45f, "[1] Pulo Duplo");
+        
+        glColor3f(0.3f, 0.7f, 1.0f);
+        gTextoCentro(g_altura * 0.38f, "[2] Congelar Plataformas (Mudar tudo para Estatica)");
+        
+        glColor3f(1.0f, 0.5f, 0.5f);
+        gTextoCentro(g_altura * 0.31f, "[3] Vida Extra (+1)");
+
+        glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glEnable(GL_DEPTH_TEST); glEnable(GL_LIGHTING);
+        glutSwapBuffers();
+        return; /* Pausa a renderizacao normal */
+    }
 
     gDesenhaHUD();
     glutSwapBuffers();
@@ -588,24 +666,46 @@ void gDesenhaPlataforma(Plataforma *p)
     gCaixa(x0, y0, z0, x1, y1, z1);
 }
 
-/* Boneco low poly: corpo + cabeca + pernas animadas; encara g_jogador.yaw. */
+/* Boneco low poly inspirado no "Steve" (estilo Minecraft): cabeca cubica
+ * grande, torso reto (camisa), bracos e pernas em caixas finas que balancam
+ * em oposicao durante a caminhada. Paleta propria (nao reproduz a skin
+ * oficial), so a linguagem visual "em blocos". Encara g_jogador.yaw. */
 void gDesenhaJogador(void)
 {
     float bob = sinf(g_jogador.frame_passo * 0.4f) * 0.05f;  /* leve balanco */
-    float sw  = sinf(g_jogador.frame_passo * 0.4f) * 0.18f;  /* passada      */
+    float sw  = sinf(g_jogador.frame_passo * 0.4f) * 0.18f;  /* passada (pernas) */
+    float aw  = sinf(g_jogador.frame_passo * 0.4f) * 0.22f;  /* passada (bracos, oposta) */
+
     glPushMatrix();
         glTranslatef(g_jogador.x, g_jogador.y, g_jogador.z);
         glRotatef(g_jogador.yaw, 0.0f, 1.0f, 0.0f);
-        /* corpo */
-        glColor3f(0.85f, 0.25f, 0.25f);
-        gCaixa(-0.28f, 0.45f + bob, -0.20f, 0.28f, 1.05f + bob, 0.20f);
-        /* cabeca */
-        glColor3f(0.95f, 0.80f, 0.65f);
-        gCaixa(-0.22f, 1.05f + bob, -0.22f, 0.22f, 1.45f + bob, 0.22f);
-        /* pernas */
-        glColor3f(0.20f, 0.20f, 0.35f);
-        gCaixa(-0.24f, 0.0f, -0.14f + sw, -0.04f, 0.48f, 0.14f + sw);
-        gCaixa( 0.04f, 0.0f, -0.14f - sw,  0.24f, 0.48f, 0.14f - sw);
+
+        /* ---- torso ("camisa") ---- */
+        glColor3f(0.20f, 0.65f, 0.60f);                      /* verde-agua */
+        gCaixa(-0.26f, 0.50f + bob, -0.16f,  0.26f, 1.10f + bob, 0.16f);
+
+        /* ---- cabeca (cubica, proporcionalmente grande) ---- */
+        glColor3f(0.85f, 0.65f, 0.50f);                      /* pele       */
+        gCaixa(-0.26f, 1.10f + bob, -0.26f,  0.26f, 1.62f + bob, 0.26f);
+
+        /* "rosto": faixa mais escura na frente p/ sugerir olhos sem textura */
+        glColor3f(0.30f, 0.22f, 0.18f);
+        gCaixa(-0.26f, 1.32f + bob, -0.265f, 0.26f, 1.42f + bob, -0.255f);
+
+        /* ---- bracos (balancam em oposicao as pernas) ---- */
+        glColor3f(0.85f, 0.65f, 0.50f);                      /* pele       */
+        gCaixa(-0.40f, 0.55f + bob, -0.10f + aw, -0.26f, 1.08f + bob, 0.10f + aw);
+        gCaixa( 0.26f, 0.55f + bob, -0.10f - aw,  0.40f, 1.08f + bob, 0.10f - aw);
+
+        /* ---- pernas ("calca") ---- */
+        glColor3f(0.20f, 0.25f, 0.55f);                      /* azul       */
+        gCaixa(-0.24f, 0.10f, -0.13f + sw, -0.02f, 0.50f, 0.13f + sw);
+        gCaixa( 0.02f, 0.10f, -0.13f - sw,  0.24f, 0.50f, 0.13f - sw);
+
+        /* ---- sapatos ---- */
+        glColor3f(0.35f, 0.35f, 0.38f);                      /* cinza      */
+        gCaixa(-0.25f, 0.0f, -0.16f + sw, -0.01f, 0.10f, 0.17f + sw);
+        gCaixa( 0.01f, 0.0f, -0.16f - sw,  0.25f, 0.10f, 0.17f - sw);
     glPopMatrix();
 }
 
@@ -650,6 +750,14 @@ void gDesenhaHUD(void)
     gDesenhaMensagem(20.0f, (GLfloat)g_altura - 54.0f, buf);
     sprintf(buf, "Pontos: %d", g_pontos);
     gDesenhaMensagem(20.0f, (GLfloat)g_altura - 78.0f, buf);
+
+    /* aviso temporario (toast): centralizado perto do topo, com fade-out
+     * suave nos ultimos 0.5s antes de desaparecer */
+    if (g_msg_toast_tempo >= 0.0f) {
+        GLfloat alpha = (g_msg_toast_tempo < 0.5f) ? (g_msg_toast_tempo / 0.5f) : 1.0f;
+        glColor3f(0.4f + 0.6f * alpha, 1.0f, 0.5f + 0.5f * alpha);
+        gTextoCentro((GLfloat)g_altura - 110.0f, g_msg_toast);
+    }
 
     /* "Reiniciando..." pisca a cada 8 ticks durante o delay */
     if (g_reiniciando && ((g_tempo_reinicio / 8) & 1)) {
@@ -714,6 +822,27 @@ void gTeclado(unsigned char tecla, int x, int y)
 
     if (tecla == 13 && g_estado == ESTADO_MENU)     /* ENTER = comecar */
         g_estado = ESTADO_JOGANDO;
+    
+    if (g_estado == ESTADO_ESCOLHA_RECOMPENSA) {
+        if (tecla == '1') {
+            g_jogador.pulo_duplo_ativo = 1;
+            g_estado = ESTADO_JOGANDO;
+        }
+        else if (tecla == '2') {
+            int i;
+            for (i = 0; i < NUM_PLATAFORMAS; i++) {
+                if (g_nivel[i].tipo == 1 || g_nivel[i].tipo == 2) {
+                    g_nivel[i].tipo = 0; /* Transforma moveis e frageis em estaticas */
+                }
+            }
+            g_estado = ESTADO_JOGANDO;
+        }
+        else if (tecla == '3') {
+            g_vidas++;
+            g_estado = ESTADO_JOGANDO;
+        }
+        return;
+    }
 }
 
 /* Tecla liberada: limpa o estado em g_teclas[]. */

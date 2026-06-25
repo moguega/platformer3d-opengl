@@ -9,6 +9,7 @@
  * ========================================================================== */
 #ifndef MAIN_H
 #define MAIN_H
+#define ESTADO_ESCOLHA_RECOMPENSA 4
 
 #ifdef _WIN32
 #include <windows.h>   /* precisa vir antes de gl.h no Windows (APIENTRY) */
@@ -160,6 +161,8 @@ typedef struct {
     int     no_chao;            /* 1 = tocando uma plataforma                */
     int     vivo;
     int     frame_passo;        /* contador p/ animacao de caminhada         */
+    int     pulo_duplo_ativo;  /* 1 = desbloqueou a habilidade */
+    int     pulos_restantes;   /* contador para o pulo no ar   */
 } Jogador;
 
 typedef struct {
@@ -216,6 +219,11 @@ extern int          g_plat_suporte;         /* indice da plataforma de apoio   *
 extern int          g_teclas[256];          /* estado das teclas (held)        */
 extern int          g_arrastando;           /* drag do botao direito ativo     */
 extern int          g_posicao_x, g_posicao_y; /* ultima posicao do mouse       */
+
+extern char         g_msg_toast[64];        /* texto do aviso temporario        */
+extern float        g_msg_toast_tempo;      /* <0 = sem aviso; senao seg. restantes */
+#define MSG_TOAST_DURACAO 2.5f              /* segundos visivel                  */
+
 
 /* ----------------------------------------------------------------------------
  *  PROTOTIPOS  (todos implementados em jogo_funcs.c)
